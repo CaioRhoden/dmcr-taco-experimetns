@@ -1,9 +1,10 @@
-from src.evaluators.metrics.testing_util import run_test
+from taco_utils.evaluators.metrics.testing_util import run_test
 import json, os
 import multiprocessing
 import numpy as np
 from typing import Dict
 from datasets import load_dataset
+import torch
 
 TIMEOUT = 10
 
@@ -115,48 +116,23 @@ def evaluate_generations_parallel(generations, samples, idx=None, debug=False):
     results = {task_id: res for task_id, res in results_list}
     return results
 
-def estimate_pass_at_k(num_samples, num_correct, k):
-    """Estimates pass@k of each problem and returns them in an array."""
-
-    def estimator(n: int, c: int, k: int) -> float:
-        """Calculates 1 - comb(n - c, k) / comb(n, k)."""
-        if n - c < k:
-            return 1.0
-        return 1.0 - np.prod(1.0 - k / np.arange(n - c + 1, n + 1))
-    import itertools
-    if isinstance(num_samples, int):
-        num_samples_it = itertools.repeat(num_samples, len(num_correct))
-    else:
-        assert len(num_samples) == len(num_correct)
-        num_samples_it = iter(num_samples)
-
-    return np.array([estimator(int(n), int(c), k) for n, c in zip(num_samples_it, num_correct)])
+def calculate_1_pass(results: Dict[str, list], device="cuda:0"):
+    """Calculate 1-pass metrics for a given results dictionary"""
+    metrics = {}
+    task_ids = list(results.keys())
+    for idx in task_ids:
+        res = results[idx]
+        max_length = max(len(inner) for inner in res)
+        padded_res = [inner + [False] * (max_length - len(inner)) for inner in res]
+        tensor = torch.tensor(padded_res, dtype=torch.bool, device=device)
+        metrics[idx] = tensor.sum(dim=0).cpu().numpy().tolist()
+    
+    return metrics
         
 
-def compute_metrics(results, k_list=[1, 10, 100]):
-    total = []
-    correct = []
-    task_ids = []
-    for task_id, res in results.items():
-        all_correct = []
-        for generation in res:
-            gen = np.array(generation)
-            all_correct.append(np.all(gen>0))
-        task_ids.append(task_id)
-        total.append(len(all_correct))
-        correct.append(sum(all_correct))
-    total = np.array(total)
-    correct = np.array(correct)
-    ks = k_list
-    detail_pass_at_k = {f"pass@{k}": estimate_pass_at_k(total, correct, k).tolist() for k in ks if (total >= k).all()}
-    pass_at_k = {f"pass@{k}": estimate_pass_at_k(total, correct, k).mean() for k in ks if (total >= k).all()}
-    detail_metrics = {k:dict(zip(task_ids, v)) for k, v in detail_pass_at_k.items()}
-    pass_at_k["detail"] = detail_metrics
-    return pass_at_k
 
 
-
-def compute(generation_file: str, taco, k_pass:list=[1, 10, 100], debug=False, file="taco_metrics.json", return_dict = False):
+def compute_1_pass_by_test(generation_file: str, taco, debug=False, file="taco_1_pass_metrics.json", return_dict = False, return_results = False):
     # Initialize evaluation dataset with the same setup with generation
     # difficulties = ['ALL']
     # difficulties = ["EASY", "MEDIUM", "MEDIUM_HARD", "HARD", "VERY_HARD"] 
@@ -172,10 +148,14 @@ def compute(generation_file: str, taco, k_pass:list=[1, 10, 100], debug=False, f
     results = evaluate_generations(generations, taco)
     # You can use evaluate_generations_parallel to parallel executing multiple outputs for each problem
     # results = evaluate_generations_parallel(generations, taco)
-    metrics = compute_metrics(results, k_list=k_pass)
+    metrics = calculate_1_pass(results)
+     
 
     if not return_dict:
-        json.dump(metrics, open('taco_metrics.json', 'w'), indent=4)
+        json.dump(metrics, open(file, 'w'), indent=4)
     
     else:
         return metrics
+
+    if return_results:
+        return metrics, results

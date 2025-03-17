@@ -1,6 +1,6 @@
 # modifed from https://github.com/hendrycks/apps/blob/main/eval/testing_util.py to fix some evaluation bugs and add instructions
 
-from src.taco_evaluator.metrics.pyext2 import RuntimeModule
+from taco_utils.evaluators.metrics.pyext2 import RuntimeModule
 import signal
 import numpy as np
 
