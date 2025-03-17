@@ -126,6 +126,8 @@ def calculate_1_pass(results: Dict[str, list], device="cuda:0"):
         padded_res = [inner + [False] * (max_length - len(inner)) for inner in res]
         tensor = torch.tensor(padded_res, dtype=torch.bool, device=device)
         metrics[idx] = tensor.sum(dim=0).cpu().numpy().tolist()
+    total_sum = sum(metrics.values())
+    metrics["total"] = total_sum/len(list(results.keys()))
     
     return metrics
         
