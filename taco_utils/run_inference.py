@@ -11,8 +11,11 @@ def run_inference(
         model_path: str,
         model_configs: dict,
         num_returns = 20,
-        max_length=2048,
-        log_datetime = True
+        num_generations = 20,
+        log_datetime = True,
+        start_idx = 0,
+        end_idx = 120,
+        quantization = True
     ):
 
     ## Exception handling
@@ -42,7 +45,7 @@ def run_inference(
 
     ## Running the model
     outputs = []
-    llm = GenericInstructModelHF(model_path)
+    llm = GenericInstructModelHF(model_path, quantization=quantization)
     for i in range(num_returns//num_generations):
 
         if log_datetime:

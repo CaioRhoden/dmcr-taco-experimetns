@@ -2,7 +2,7 @@
 import re
 import json
 
-def parse_generations(generations: list, id: int, saving_path: str):
+def parse_generations(generations_path: str, id: int, saving_path: str):
     
 
     ## Parsing python coding blocks starting with the ```python and ending with the ``` tag
@@ -19,6 +19,7 @@ def parse_generations(generations: list, id: int, saving_path: str):
     """
     
     gens = []
+    generations = json.load(open(generations_path, "r"))
     for i in range(len(generations)):
 
         code_blocks = re.findall(r'```python(.*?)```', generations[i]["generated_text"], re.DOTALL)
