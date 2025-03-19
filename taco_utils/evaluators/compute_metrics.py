@@ -1,4 +1,4 @@
-from metrics.testing_util import run_test
+from taco_utils.evaluators.metrics.testing_util import run_test
 import json, os
 import multiprocessing
 import numpy as np
@@ -156,7 +156,7 @@ def compute_metrics(results, k_list=[1, 10, 100]):
 
 
 
-def compute(generation_file: str, taco, k_pass:list=[1, 10, 100], debug=False, file="taco_metrics.json", return_dict = False):
+def compute_key_pass(generation_file: str, taco, k_pass:list=[1, 10, 100], saving_file="taco_metrics.json"):
     # Initialize evaluation dataset with the same setup with generation
     # difficulties = ['ALL']
     # difficulties = ["EASY", "MEDIUM", "MEDIUM_HARD", "HARD", "VERY_HARD"] 
@@ -174,8 +174,5 @@ def compute(generation_file: str, taco, k_pass:list=[1, 10, 100], debug=False, f
     # results = evaluate_generations_parallel(generations, taco)
     metrics = compute_metrics(results, k_list=k_pass)
 
-    if not return_dict:
-        json.dump(metrics, open('taco_metrics.json', 'w'), indent=4)
+    json.dump(metrics, open(saving_file, 'w'), indent=4)
     
-    else:
-        return metrics
