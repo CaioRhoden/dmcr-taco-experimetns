@@ -7,10 +7,12 @@ from datasets import load_from_disk
 import yaml
 import wandb
 import uuid
+import argparse
 
 ## Repo funtions
 from taco_utils.evaluators.TACOEvaluator import TACOEvaluator
 from taco_utils import run_inference, parse_generations
+from datasets.arrow_dataset import Dataset, DatasetDict
 
 seed = 42
 # NumPy
@@ -34,33 +36,118 @@ if torch.cuda.is_available():
 
 
 # split context data
-def generate_data_config(test: pl.DataFrame, train: pl.DataFrame):
+from typing import Any, Dict, List
 
+def run(data_path: str, config_path: str) -> None:
+    """
+    Run the experiment with specified data and configuration paths.
+
+    Args:
+        data_path (str): The path to the data configuration file.
+        config_path (str): The path to the experiment configuration file.
+
+    Returns:
+        None
+    """
+    PATH = "../data/TACO/processed"
+    train: pl.DataFrame = pl.read_ipc(f"{PATH}/train.feather")
+    test: pl.DataFrame = pl.read_ipc(f"{PATH}/test.feather")
+    train_solutions: pl.DataFrame = pl.read_ipc(f"{PATH}/train_solutions.feather")
+    test_dict: Dataset | DatasetDict = load_from_disk("../data/TACO/test.hf")
+
+    print("Splitting data to be used during experiment")
+    generate_data_config(test, train, data_path)
+
+    config: Dict[str, Any] = json.load(open(config_path))
+
+    data: Dict[str, Any] = json.load(open(data_path))
+    for context_type in ["no_context", "full_problem", "only_solutions"]:
+        print(f"Running inference for context type: {context_type}")
+        for difficulty in data["inputs"].keys():
+            print(f"Running inference for difficulty: {difficulty}")
+            for task_id in data["inputs"][difficulty]:
+                run_inference_id(
+                    run_id=task_id,
+                    context_type=context_type,
+                    difficulty=difficulty,
+                    config=config,
+                    test=test,
+                    train=train,
+                    train_solutions=train_solutions,
+                    test_dict=test_dict
+                )
+                
+
+
+
+
+
+
+def generate_data_config(test: pl.DataFrame, train: pl.DataFrame, path: str) -> None:
+    """
+    Generate a data partition configuration for the experiment.
+
+    The function takes in the test and train dataframes, and returns a dictionary
+    where the keys are the difficulty levels, and the values are dictionaries
+    containing the task IDs as keys and the corresponding context task IDs as
+    values.
+
+    :param test: The test dataframe.
+    :type test: pl.DataFrame
+    :param train: The train dataframe.
+    :type train: pl.DataFrame
+    :return: A dictionary containing the data partition configuration.
+    :rtype: Dict[str, Dict[int, List[int]]]
+    """
+
+    ### Sample 5 random examples from test as input by difficulty
     df = (
             test
             .filter(pl.col("tags") == "Probability")
             .group_by("difficulty")
-            .agg(pl.col("id").sample(n=5, shuffle=True))
+            .agg(pl.col("id").sample(n=5, shuffle=True, with_replacement=False))
           )
+    
+    df.to_numpy()
 
+    inputs = {}
+    for _dif in df.to_numpy():
+        inputs[_dif[0]] = _dif[1].tolist()
+
+    ## Get 4 random examples from train set with the same diffulty from the input
+    context = {}
+    for _key in inputs.keys():
+        for _id in inputs[_key]:
+            _df = (
+                train
+                .filter(pl.col("tags") == "Probability")
+                .filter(pl.col("difficulty") == _key)
+                .sample(n=4, shuffle=True, with_replacement=False)
+            )
+
+            context[_id] = _df.select(pl.col("id")).to_numpy().squeeze(1).tolist()
+    
+    ## Save data partition to be used in running experiment
+    with open(path, "w") as f:
+        json.dump([input, context], f, ident=4)
     
 
 
 
 
-def inference_id(run_id: int, context_type: str):
+def run_inference_id(
+        run_id: int, 
+        context_type: str, 
+        difficulty: str,
+        config: dict[str, Any],
+        test: pl.DataFrame,
+        train: pl.DataFrame,
+        train_solutions: pl.DataFrame,
+        test_dict: Dataset | DatasetDict
 
-    PATH  = "../data/TACO/processed"
-    train = pl.read_ipc(f"{PATH}/train.feather")
-    test = pl.read_ipc(f"{PATH}/test.feather")
-    train_solutions = pl.read_ipc(f"{PATH}/train_solutions.feather")
-    train_dict = load_from_disk("../data/TACO/train.hf")
-    test_dict = load_from_disk("../data/TACO/test.hf")
+    ):
 
-    try:
-        config = yaml.safe_load(open("config.yaml"))
-    except FileNotFoundError:
-        print("Config .yaml not found, please create it")
+    
 
     selected_problem = test.filter(pl.col("id") == run_id)
     prompt_input = selected_problem.select("input").to_struct().to_pandas().iloc[0]["input"]
@@ -103,11 +190,26 @@ def inference_id(run_id: int, context_type: str):
             
             prompt = context_prompt + prompt
 
-    
-    run_experiment(config, prompt, [test_dict[run_id]])
+
+    inference(
+        config, 
+        prompt, 
+        [test_dict[run_id]], 
+        context_type=context_type, 
+        run_id=run_id,
+        diffiulty=difficulty
+    )
 
 
-def run_experiment(config: dict, prompt: str, tests: list, context_type: str, run_id: int):
+def inference(
+        config: dict, 
+        prompt: str, 
+        tests: list, 
+        context_type: str, 
+        run_id: int,
+        diffiulty: str
+        
+        ):
 
 
     wandb.init(
@@ -160,27 +262,33 @@ def run_experiment(config: dict, prompt: str, tests: list, context_type: str, ru
     wandb.log({
         "pass@1": evaluator.extract_pass_1(),
         "normalized_sum": evaluator.extracted_normalized_sum(),
-        "device": torch.cuda.get_device_name(i)
+        "device": torch.cuda.get_device_name(i),
+        "difficulty": diffiulty
     })
     
     complete_log = wandb.Artifact(
         name = "complete_log",
         type = "log",
-        description = "generatios, parse, metrics and input by run",   
+        description = "generatios, parse, metrics and input by run",
     )
     complete_log.add_file(f"logs/{input_id}.txt")
-    complete_log.add_file(f"{config['inference_configs']['saving_path']}/no_context.json")
-    complete_log.add_file(f"{config['parse_configs']['saving_path']}/no_context_parsed.json")
-    complete_log.add_file(f"{config['results_configs']['saving_path']}/no_context_1_pass.json")
-    complete_log.add_file(f"{config['results_configs']['saving_path']}/no_context_normalized_sum.json")
+    complete_log.add_file(f"{config['saving_paths']['inference'][context_type]}/{run_id}_inference.json")
+    complete_log.add_file(f"{config['saving_paths']['parsing'][context_type]}/{run_id}_parsing.json")
+    complete_log.add_file(f"{config['saving_paths']['results'][context_type]}/{run_id}_pass_k.json")
+    complete_log.add_file(f"{config['saving_paths']['results'][context_type]}/{run_id}_normalized_sum.json")
     wandb.log_artifact(complete_log)
 
     wandb.finish()
 
-def __main__():
-    run()
-
-
+    
 if __name__ == "__main__":
-    __main__()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--data_path", type=str, required=True)
+    parser.add_argument("--config_path", type=str, required=True)
+    args = parser.parse_args()
+
+    data_path = args.data_path
+    config_path = args.config_path
+
+    run(data_path, config_path)
 
