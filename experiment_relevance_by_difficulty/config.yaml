@@ -1,8 +1,19 @@
-
+saving_paths:
+  inference:
+    no_context: "generations/no_context"
+    full_problem: "generations/full_problem"
+    only_solutions: "generations/only_solutions"
+  parsing:
+    no_context: "parsing/no_context"
+    full_problem: "parsing/full_problem"
+    only_solutions: "parsing/only_solutions"
+  results:
+    no_context: "results/no_context"
+    full_problem: "results/full_problem"
+    only_solutions: "results/only_solutions"
 
 inference_configs:
   instruction: "You are a coding generation tool that will solve a problem using Python"
-  saving_path: "generations"
   model_path: "../models/llms/Llama-3.2-3B-Instruct"
   num_returns: 20
   num_generations: 200
@@ -16,10 +27,10 @@ model_configs:
   top_p: 0.95
   max_length: 2048
 
-parse_configs:
-  saving_path: "parsed"
 
 results_configs:
   saving_path: "results"
   log_only_total: True
+
+context: "context.json"
   

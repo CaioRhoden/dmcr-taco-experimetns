@@ -122,7 +122,7 @@ def estimate_pass_at_k(num_samples, num_correct, k):
         """Calculates 1 - comb(n - c, k) / comb(n, k)."""
         if n - c < k:
             return 1.0
-        return 1.0 - np.prod(1.0 - k / np.arange(n - c + 1, n + 1))
+        return float(1.0 - np.prod(1.0 - k / np.arange(n - c + 1, n + 1)))
     import itertools
     if isinstance(num_samples, int):
         num_samples_it = itertools.repeat(num_samples, len(num_correct))

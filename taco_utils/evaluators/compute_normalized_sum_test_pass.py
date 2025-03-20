@@ -2,7 +2,7 @@ from taco_utils.evaluators.metrics.testing_util import run_test
 import json, os
 import multiprocessing
 import numpy as np
-from typing import Dict
+from typing import Any, Dict
 from datasets import load_dataset
 import torch
 
@@ -116,7 +116,7 @@ def evaluate_generations_parallel(generations, samples, idx=None, debug=False):
     results = {task_id: res for task_id, res in results_list}
     return results
 
-def calculate_1_pass(results: Dict[str, list], device="cuda:0"):
+def calculate_1_pass(results: Dict[str, list], device="cuda:0") -> Dict[str, Any]:
     """Calculate 1-pass metrics for a given results dictionary"""
     metrics = {}
     task_ids = list(results.keys())
@@ -129,14 +129,12 @@ def calculate_1_pass(results: Dict[str, list], device="cuda:0"):
 
         tensor = torch.tensor(int_padded_res, dtype=torch.int32, device=device)
         mask = (tensor == 1)
-        print(tensor)
         tensor = torch.where(mask, tensor, torch.zeros_like(tensor))
-        print(tensor)
-        metrics[f"tests_{idx}"] = tensor.sum(dim=0).cpu().numpy().tolist()
-        print(metrics[f"tests_{idx}"])
-        total_sum = sum(metrics[f"tests_{idx}"])
+        sum_by_test: list[int] = tensor.sum(dim=0).cpu().numpy().tolist() # type: ignore
+        metrics["tests"] = sum_by_test
+        total_sum: int = sum(metrics["tests"])
         print(len(res), max_length)
-        metrics[f"total_{idx}"] = total_sum/(len(res)*max_length)
+        metrics[f"total"] = total_sum/(len(res)*max_length)
     
     return metrics
         
