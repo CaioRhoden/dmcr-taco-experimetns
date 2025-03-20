@@ -124,10 +124,19 @@ def calculate_1_pass(results: Dict[str, list], device="cuda:0"):
         res = results[idx]
         max_length = max(len(inner) for inner in res)
         padded_res = [inner + [False] * (max_length - len(inner)) for inner in res]
-        tensor = torch.tensor(padded_res, dtype=torch.bool, device=device)
-        metrics[idx] = tensor.sum(dim=0).cpu().numpy().tolist()
-    total_sum = sum(metrics.values())
-    metrics["total"] = total_sum/len(list(results.keys()))
+        print(padded_res)
+        int_padded_res = [[int(item) for item in inner] for inner in padded_res]
+
+        tensor = torch.tensor(int_padded_res, dtype=torch.int32, device=device)
+        mask = (tensor == 1)
+        print(tensor)
+        tensor = torch.where(mask, tensor, torch.zeros_like(tensor))
+        print(tensor)
+        metrics[f"tests_{idx}"] = tensor.sum(dim=0).cpu().numpy().tolist()
+        print(metrics[f"tests_{idx}"])
+        total_sum = sum(metrics[f"tests_{idx}"])
+        print(len(res), max_length)
+        metrics[f"total_{idx}"] = total_sum/(len(res)*max_length)
     
     return metrics
         
@@ -136,8 +145,9 @@ def calculate_1_pass(results: Dict[str, list], device="cuda:0"):
 
 def compute_normalized_sum_test_pass(
         generation_file: str, 
-        taco, debug=False, 
-        file="taco_1_pass_metrics.json", 
+        taco, 
+        debug=False, 
+        saving_file="taco_1_pass_metrics.json", 
 
         ):
     # Initialize evaluation dataset with the same setup with generation
@@ -158,4 +168,4 @@ def compute_normalized_sum_test_pass(
     metrics = calculate_1_pass(results)
      
 
-    json.dump(metrics, open(file, 'w'), indent=4)
+    json.dump(metrics, open(saving_file, 'w'), indent=4)

@@ -39,14 +39,17 @@ def run_inference(
     Raises:
     ValueError: If num_generations is greater than num_returns
     """
-    if num_generations > num_returns:
+    if num_returns > num_generations:
         raise ValueError("num_generations should be less than num_returns")
+    
+    if num_generations > 1:
+        model_configs["num_return_sequences"] = num_returns
 
 
     ## Running the model
     outputs = []
     llm = GenericInstructModelHF(model_path, quantization=quantization)
-    for i in range(num_returns//num_generations):
+    for i in range(num_generations//num_returns):
 
         if log_datetime:
             print(f"Lopp {i}, {datetime.datetime.now()}")
