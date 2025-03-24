@@ -15,12 +15,12 @@ saving_paths:
 inference_configs:
   instruction: "You are a coding generation tool that will solve a problem using Python"
   model_path: "../models/llms/Llama-3.2-3B-Instruct"
-  num_returns: 10
-  num_generations: 100
+  num_returns: 25
+  num_generations: 50
   log_datetime: False
   quantization: True
-  start_idx: 0
-  end_idx: 75
+  start_idx: 1
+  end_idx: 36
 
 model_configs:
   temperature: 0.7
