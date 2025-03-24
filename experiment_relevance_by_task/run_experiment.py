@@ -57,7 +57,7 @@ def run(data_path: str, config_path: str, input_len: int) -> None:
     train: pl.DataFrame = pl.read_ipc(f"{PATH}/train.feather")
     test: pl.DataFrame = pl.read_ipc(f"{PATH}/test.feather")
     train_solutions: pl.DataFrame = pl.read_ipc(f"{PATH}/train_solutions.feather")
-    test_dict = load_from_disk("../data/TACO/test.hf")
+    test_dict = Dataset.from_file("../data/TACO/test/data-00000-of-00001.arrow")
 
     
     config: Dict[str, Any] = yaml.safe_load(open(config_path))
@@ -172,72 +172,6 @@ def generate_data_config(test: pl.DataFrame, train: pl.DataFrame, path: str, inp
     with open(path, "w") as f:
         json.dump(input_data, f, indent=4)
     
-
-
-
-
-def run_inference_id(
-        run_id: int, 
-        context_type: str, 
-        tag: str,
-        config: dict[str, Any],
-        test: pl.DataFrame,
-        train: pl.DataFrame,
-        train_solutions: pl.DataFrame,
-        test_dict: Any,
-        context: dict[str, Any] = {},
-
-    ):
-
-    
-
-    selected_problem = test.filter(pl.col("id") == run_id)
-    prompt_input = selected_problem.select("input").to_struct().to_pandas().iloc[0]["input"]
-    prompt = f"Please write a Python program \nQUESTION: \n{prompt_input} \n ANSWER: \n."
-
-    print(f"Context Type: {context_type}")
-
-
-    ### SETUP CONTEXT BY TYPE
-    match context_type:
-
-        case "no_context":
-            pass
-
-        case "full_problem":
-            context_ids = context[tag][str(run_id)]
-            inputs = train.filter(pl.col("id").is_in(context_ids)).select("input").unique().to_dict()["input"]
-            ## One solution per problem
-            solutions = train_solutions.filter(pl.col("id").is_in(context_ids)).group_by(pl.col("id")).head(1).select("solution").unique().to_dict()["solution"]
-            
-            context_prompt = f"You will have to answer a programming quesiton in {tag}, we will pass before some examples of questions and solutions\n"
-            for _idx in range(len(inputs)):
-                context_prompt += f"EXAMPLE QUESTION {_idx}:\n {inputs[_idx]}\n EXAMPLE SOLUTION {_idx}:\n {solutions[_idx]}\n"
-            
-            prompt = context_prompt + prompt
-
-        case "only_solutions":
-            context_ids = context[tag][str(run_id)]
-            ## One solution per problem
-            solutions = train_solutions.filter(pl.col("id").is_in(context_ids)).group_by(pl.col("id")).head(1).select("solution").unique().to_dict()["solution"]
-            
-            context_prompt = f"You will have to answer a programming quesiton in {tag}, we will pass before some examples of solutions for the same kind of problem\n"
-            for _idx in range(len(solutions)):
-                context_prompt += f"EXAMPLE SOLUTION {_idx}:\n {solutions[_idx]}\n"
-            
-            prompt = context_prompt + prompt
-
-
-    inference(
-        config, 
-        prompt, 
-        [test_dict[run_id]], 
-        context_type=context_type, 
-        run_id=run_id,
-        tag=tag
-    )
-
-
 def inference(
         config: dict, 
         prompt: str, 
@@ -299,7 +233,7 @@ def inference(
 
 
 
-    # evaluator.evaluate()
+    evaluator.evaluate()
     end_time = datetime.datetime.now()
     duration_in_seconds = (end_time - start_time).total_seconds()
     wandb.log({
@@ -324,6 +258,71 @@ def inference(
     wandb.log_artifact(complete_log)
     print("Finished")
     wandb.finish()
+
+
+
+
+def run_inference_id(
+        run_id: int, 
+        context_type: str, 
+        tag: str,
+        config: dict[str, Any],
+        test: pl.DataFrame,
+        train: pl.DataFrame,
+        train_solutions: pl.DataFrame,
+        test_dict: Any,
+        context: dict[str, Any] = {},
+
+    ):
+
+    
+
+    selected_problem = test.filter(pl.col("id") == run_id)
+    prompt_input = selected_problem.select("input").to_struct().to_pandas().iloc[0]["input"]
+    prompt = f"Please write a Python program \nQUESTION: \n{prompt_input} \n ANSWER: \n."
+
+    print(f"Context Type: {context_type}")
+
+
+    ### SETUP CONTEXT BY TYPE
+    match context_type:
+
+        case "no_context":
+            pass
+
+        case "full_problem":
+            context_ids = context[tag][str(run_id)]
+            inputs = train.filter(pl.col("id").is_in(context_ids)).select("input").unique().to_dict()["input"]
+            ## One solution per problem
+            solutions = train_solutions.filter(pl.col("id").is_in(context_ids)).group_by(pl.col("id")).head(1).select("solution").unique().to_dict()["solution"]
+            
+            context_prompt = f"You will have to answer a programming quesiton in {tag}, we will pass before some examples of questions and solutions\n"
+            for _idx in range(len(inputs)):
+                context_prompt += f"EXAMPLE QUESTION {_idx}:\n {inputs[_idx]}\n EXAMPLE SOLUTION {_idx}:\n {solutions[_idx]}\n"
+            
+            prompt = context_prompt + prompt
+
+        case "only_solutions":
+            context_ids = context[tag][str(run_id)]
+            ## One solution per problem
+            solutions = train_solutions.filter(pl.col("id").is_in(context_ids)).group_by(pl.col("id")).head(1).select("solution").unique().to_dict()["solution"]
+            
+            context_prompt = f"You will have to answer a programming quesiton in {tag}, we will pass before some examples of solutions for the same kind of problem\n"
+            for _idx in range(len(solutions)):
+                context_prompt += f"EXAMPLE SOLUTION {_idx}:\n {solutions[_idx]}\n"
+            
+            prompt = context_prompt + prompt
+
+    inference(
+        config, 
+        prompt, 
+        [test_dict[run_id]], 
+        context_type=context_type, 
+        run_id=run_id,
+        tag=tag
+    )
+
+
 
     
 if __name__ == "__main__":
