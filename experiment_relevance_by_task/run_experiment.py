@@ -3,7 +3,7 @@ import numpy as np
 import random
 import polars as pl
 import json
-from datasets import load_from_disk
+from datasets import load_dataset
 import yaml
 import wandb
 import uuid
@@ -57,7 +57,7 @@ def run(data_path: str, config_path: str, input_len: int) -> None:
     train: pl.DataFrame = pl.read_ipc(f"{PATH}/train.feather")
     test: pl.DataFrame = pl.read_ipc(f"{PATH}/test.feather")
     train_solutions: pl.DataFrame = pl.read_ipc(f"{PATH}/train_solutions.feather")
-    test_dict = Dataset.from_file("../data/TACO/test/data-00000-of-00001.arrow")
+    train_dict: pl.DataFrame = pl.read_ipc(f"{PATH}/train_dict.feather")
 
     
     config: Dict[str, Any] = yaml.safe_load(open(config_path))
@@ -69,7 +69,7 @@ def run(data_path: str, config_path: str, input_len: int) -> None:
 
 
     print("Splitting data to be used during experiment")
-    generate_data_config(test, train, data_path, input_len)
+    generate_data_config(train, data_path, input_len)
 
 
     data: Dict[str, Any] = json.load(open(data_path))
@@ -93,10 +93,9 @@ def run(data_path: str, config_path: str, input_len: int) -> None:
                         context_type=context_type,
                         tag=tag,
                         config=config,
-                        test=test,
                         train=train,
                         train_solutions=train_solutions,
-                        test_dict=test_dict,
+                        train_dict=train_dict,
                         context=data["context_ids"],
                     )
 
@@ -109,7 +108,7 @@ def run(data_path: str, config_path: str, input_len: int) -> None:
 
 
 
-def generate_data_config(test: pl.DataFrame, train: pl.DataFrame, path: str, input_len: int) -> None:
+def generate_data_config(train: pl.DataFrame, path: str, input_len: int) -> None:
     """
     Generate a data partition configuration for the experiment.
 
@@ -128,17 +127,17 @@ def generate_data_config(test: pl.DataFrame, train: pl.DataFrame, path: str, inp
 
     ### Sample 5 random examples from test as input by difficulty
     _filter = (
-        test
+        train
         .filter(pl.col("difficulty") == "MEDIUM")
         .group_by("tags")
         .agg(pl.col("id").count().alias("count"))
-        .filter(pl.col("count") >= 5)
+        .filter(pl.col("count") >= 6)
         .select("tags")
 
     )
 
     df = (
-            test
+            train
             .filter(pl.col("difficulty") == "MEDIUM")
             .join(_filter, on="tags", how="inner")
             .group_by("tags")
@@ -161,6 +160,7 @@ def generate_data_config(test: pl.DataFrame, train: pl.DataFrame, path: str, inp
         for _id in  input_data["input_ids"][_key]:
             _df = (
                 train
+                .filter(pl.col("id") != _id)
                 .filter(pl.col("difficulty") == "MEDIUM")
                 .filter(pl.col("tags") == _key)
                 .sample(n=4, shuffle=True, with_replacement=False, seed=42)
@@ -188,29 +188,29 @@ def inference(
     wandb.init(
         project = "dmcr-taco-experiment-tag-relevance", 
         dir = "logs",
-        id = f"{run_id}_{context_type}_{tag}", 
+        id = f"{run_id}_{context_type}_{tag}_{str(uuid.uuid4())}", 
         name = f"{run_id}_{context_type}_{tag}",
         config = config,
 
     )
 
     print(f"Generating codes: {datetime.datetime.now()}")
-    run_inference(
-        prompt = prompt,
-        instruction = config["inference_configs"]["instruction"],
-        saving_path = f"{config['saving_paths']['inference'][context_type]}/{run_id}_inference.json",
-        model_path = config["inference_configs"]["model_path"],
-        model_configs = config["model_configs"],
-        num_returns = config["inference_configs"]["num_returns"],
-        num_generations = config["inference_configs"]["num_generations"],
-        log_datetime = config["inference_configs"]["log_datetime"],
-        quantization = config["inference_configs"]["quantization"]
+    # run_inference(
+    #     prompt = prompt,
+    #     instruction = config["inference_configs"]["instruction"],
+    #     saving_path = f"{config['saving_paths']['inference'][context_type]}/{run_id}_inference.json",
+    #     model_path = config["inference_configs"]["model_path"],
+    #     model_configs = config["model_configs"],
+    #     num_returns = config["inference_configs"]["num_returns"],
+    #     num_generations = config["inference_configs"]["num_generations"],
+    #     log_datetime = config["inference_configs"]["log_datetime"],
+    #     quantization = config["inference_configs"]["quantization"]
         
-    )
+    # )
     print(f"Parsing generations: {datetime.datetime.now()}")
     parse_generations(
         generations_path=f"{config['saving_paths']['inference'][context_type]}/{run_id}_inference.json",
-        id = 2545,
+        id = run_id,
         saving_path = f"{config['saving_paths']['parsing'][context_type]}/{run_id}_parsing.json"
     )
 
@@ -220,8 +220,7 @@ def inference(
         generation_file = f"{config['saving_paths']['parsing'][context_type]}/{run_id}_parsing.json",
         taco = tests,
         k_pass = [1],
-        k_pass_path = f"{config['saving_paths']['results'][context_type]}/{run_id}_pass_k.json",
-        normalized_sum_path = f"{config['saving_paths']['results'][context_type]}/{run_id}_normalized_sum.json"
+        metrics_path = f"{config['saving_paths']['results'][context_type]}/{run_id}_metrics.json",
     )
 
     evaluator.evaluate()
@@ -253,8 +252,7 @@ def inference(
     complete_log.add_file(f"logs/{input_id}.txt")
     complete_log.add_file(f"{config['saving_paths']['inference'][context_type]}/{run_id}_inference.json")
     complete_log.add_file(f"{config['saving_paths']['parsing'][context_type]}/{run_id}_parsing.json")
-    complete_log.add_file(f"{config['saving_paths']['results'][context_type]}/{run_id}_pass_k.json")
-    complete_log.add_file(f"{config['saving_paths']['results'][context_type]}/{run_id}_normalized_sum.json")
+    complete_log.add_file(f"{config['saving_paths']['results'][context_type]}/{run_id}_metrics.json")
     wandb.log_artifact(complete_log)
     print("Finished")
     wandb.finish()
@@ -267,17 +265,16 @@ def run_inference_id(
         context_type: str, 
         tag: str,
         config: dict[str, Any],
-        test: pl.DataFrame,
         train: pl.DataFrame,
         train_solutions: pl.DataFrame,
-        test_dict: Any,
+        train_dict: Any,
         context: dict[str, Any] = {},
 
     ):
 
     
 
-    selected_problem = test.filter(pl.col("id") == run_id)
+    selected_problem = train.filter(pl.col("id") == run_id)
     prompt_input = selected_problem.select("input").to_struct().to_pandas().iloc[0]["input"]
     prompt = f"Please write a Python program \nQUESTION: \n{prompt_input} \n ANSWER: \n."
 
@@ -316,7 +313,7 @@ def run_inference_id(
     inference(
         config, 
         prompt, 
-        [test_dict[run_id]], 
+        [train_dict[run_id]], 
         context_type=context_type, 
         run_id=run_id,
         tag=tag

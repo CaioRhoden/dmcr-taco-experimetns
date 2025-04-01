@@ -16,6 +16,7 @@ os.environ["TOKENIZERS_PARALLELISM"] = "false"
 from taco_utils.evaluators.TACOEvaluator import TACOEvaluator
 from taco_utils import run_inference, parse_generations
 from datasets.arrow_dataset import Dataset
+from datasets import load_dataset
 
 seed = 42
 # NumPy
@@ -54,9 +55,8 @@ def run(data_path: str, config_path: str, input_len: int) -> None:
     """
     PATH = "../data/TACO/processed"
     train: pl.DataFrame = pl.read_ipc(f"{PATH}/train.feather")
-    test: pl.DataFrame = pl.read_ipc(f"{PATH}/test.feather")
     train_solutions: pl.DataFrame = pl.read_ipc(f"{PATH}/train_solutions.feather")
-    test_dict = load_from_disk("../data/TACO/test.hf")
+    train_dict =  load_dataset("arrow", data_dir="../data/TACO/train", split="train")
 
     
     config: Dict[str, Any] = yaml.safe_load(open(config_path))
@@ -68,7 +68,7 @@ def run(data_path: str, config_path: str, input_len: int) -> None:
 
 
     print("Splitting data to be used during experiment")
-    generate_data_config(test, train, data_path, input_len)
+    generate_data_config(train, train, data_path, input_len)
 
 
     data: Dict[str, Any] = json.load(open(data_path))
@@ -84,7 +84,7 @@ def run(data_path: str, config_path: str, input_len: int) -> None:
 
             ## Run inference by id and compare the expected started and ended index
             for task_id in data["input_ids"][difficulty]:
-                if ref_idx < start_idx or ref_idx > end_idx:
+                if ref_idx < start_idx or ref_idx >= end_idx:
                     pass
                 else:
                     run_inference_id(
@@ -92,10 +92,10 @@ def run(data_path: str, config_path: str, input_len: int) -> None:
                         context_type=context_type,
                         difficulty=difficulty,
                         config=config,
-                        test=test,
+                        test=train,
                         train=train,
                         train_solutions=train_solutions,
-                        test_dict=test_dict,
+                        test_dict=train_dict,
                         context=data["context_ids"],
                     )
 
@@ -126,11 +126,23 @@ def generate_data_config(test: pl.DataFrame, train: pl.DataFrame, path: str, inp
     """
 
     ### Sample 5 random examples from test as input by difficulty
+
+    _filter = (
+        train
+        .filter(pl.col("tags") == "Probability")
+        .group_by("difficulty")
+        .agg(pl.col("id").count().alias("count"))
+        .filter(pl.col("count") >= 5)
+        .select("difficulty")
+
+    )
     df = (
             test
+            .join(_filter, on="difficulty", how="inner")
             .filter(pl.col("tags") == "Probability")
             .group_by("difficulty")
             .agg(pl.col("id").sample(n=input_len, shuffle=True, with_replacement=False,seed=42))
+            .sort("difficulty")
           )
     
     df.to_numpy()
@@ -147,6 +159,7 @@ def generate_data_config(test: pl.DataFrame, train: pl.DataFrame, path: str, inp
         for _id in  input_data["input_ids"][_key]:
             _df = (
                 train
+                .filter(pl.col("id") != _id)
                 .filter(pl.col("tags") == "Probability")
                 .filter(pl.col("difficulty") == _key)
                 .sample(n=4, shuffle=True, with_replacement=False, seed=42)
@@ -191,7 +204,7 @@ def run_inference_id(
             pass
 
         case "full_problem":
-            context_ids = context[run_id]
+            context_ids = context[str(run_id)]
             inputs = train.filter(pl.col("id").is_in(context_ids)).select("input").unique().to_dict()["input"]
             ## One solution per problem
             solutions = train_solutions.filter(pl.col("id").is_in(context_ids)).group_by(pl.col("id")).head(1).select("solution").unique().to_dict()["solution"]
@@ -203,7 +216,7 @@ def run_inference_id(
             prompt = context_prompt + prompt
 
         case "only_solutions":
-            context_ids = context[run_id]
+            context_ids = context[str(run_id)]
             ## One solution per problem
             solutions = train_solutions.filter(pl.col("id").is_in(context_ids)).group_by(pl.col("id")).head(1).select("solution").unique().to_dict()["solution"]
             
@@ -234,12 +247,13 @@ def inference(
         
         ):
 
-
+    config["difficulty"] = diffiulty
+    config["context_type"] = context_type
     wandb.init(
         project = "dmcr-taco-experiment-difficulty-relevance", 
         dir = "logs",
-        id = f"{run_id}_{context_type}", 
-        name = f"{run_id}_{context_type}",
+        id = f"{run_id}_{context_type}_{diffiulty}_{str(uuid.uuid4())}", 
+        name = f"{run_id}_{context_type}_{diffiulty}",
         config = config,
 
     )
@@ -260,7 +274,7 @@ def inference(
 
     parse_generations(
         generations_path=f"{config['saving_paths']['inference'][context_type]}/{run_id}_inference.json",
-        id = 2545,
+        id = run_id,
         saving_path = f"{config['saving_paths']['parsing'][context_type]}/{run_id}_parsing.json"
     )
 
@@ -268,9 +282,8 @@ def inference(
     evaluator = TACOEvaluator(
         generation_file = f"{config['saving_paths']['parsing'][context_type]}/{run_id}_parsing.json",
         taco = tests,
-        k_pass = [1, 10, 100],
-        k_pass_path = f"{config['saving_paths']['results'][context_type]}/{run_id}_pass_k.json",
-        normalized_sum_path = f"{config['saving_paths']['results'][context_type]}/{run_id}_normalized_sum.json"
+        k_pass = [1],
+        metrics_path = f"{config['saving_paths']['results'][context_type]}/{run_id}_metrics.json",
     )
 
     evaluator.evaluate()
@@ -288,7 +301,8 @@ def inference(
         "pass@1": evaluator.extract_pass_1(),
         "normalized_sum": evaluator.extracted_normalized_sum(),
         "device": torch.cuda.get_device_name(i),
-        "difficulty": diffiulty
+        "difficulty": diffiulty,
+        "context_type": context_type
     })
     
     complete_log = wandb.Artifact(
@@ -299,8 +313,7 @@ def inference(
     complete_log.add_file(f"logs/{input_id}.txt")
     complete_log.add_file(f"{config['saving_paths']['inference'][context_type]}/{run_id}_inference.json")
     complete_log.add_file(f"{config['saving_paths']['parsing'][context_type]}/{run_id}_parsing.json")
-    complete_log.add_file(f"{config['saving_paths']['results'][context_type]}/{run_id}_pass_k.json")
-    complete_log.add_file(f"{config['saving_paths']['results'][context_type]}/{run_id}_normalized_sum.json")
+    complete_log.add_file(f"{config['saving_paths']['results'][context_type]}/{run_id}_metrics.json")
     wandb.log_artifact(complete_log)
 
     wandb.finish()

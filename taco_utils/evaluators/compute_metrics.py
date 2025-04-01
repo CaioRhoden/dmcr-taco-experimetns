@@ -1,14 +1,15 @@
+import torch
 from taco_utils.evaluators.metrics.testing_util import run_test
 import json, os
 import multiprocessing
 import numpy as np
-from typing import Dict
+from typing import Any, Dict
 from datasets import load_dataset
 
 TIMEOUT = 10
 
 
-def check_correctness(sample, generation, timeout, debug=True):
+def check_correctness(sample, generation, timeout, debug=False):
     """Check correctness of code generation with a global timeout.
     The global timeout is to catch some extreme/rare cases not handled by the timeouts
     inside `run_test`"""
@@ -28,6 +29,7 @@ def check_correctness(sample, generation, timeout, debug=True):
         result = [[-1 for i in range(len(in_outs["inputs"]))]]
         if debug:
             print(f"global timeout")
+    
     return result[0]
 
 def load_generation(input_file):
@@ -41,14 +43,17 @@ def load_generation(input_file):
     return generations
 
 def evaluate_generations(generations, samples, idx=None, debug=False):
+    print("Evaluate Generations")
     assert len(generations.keys()) == len(samples)
     results = {}
     idx = 0
     for task_id, problem_generations in generations.items():
+        
         sample = samples[idx]
         res = []
         # loop over the generations
         for o_idx, o in enumerate(problem_generations):
+            print(f"Code generation {o_idx} of {len(problem_generations)}")
             curr_res = [-2]
             try:
                 curr_res = check_correctness(sample, o, timeout=TIMEOUT, debug=debug)
@@ -79,6 +84,7 @@ def evaluate_generations(generations, samples, idx=None, debug=False):
 def process_generation(args):
     task_id, sample, problem_generations, debug = args
     res = []
+    debug = True
     for o_idx, o in enumerate(problem_generations):
         curr_res = [-2]
         try:
@@ -103,16 +109,22 @@ def process_generation(args):
         finally:
             assert isinstance(curr_res, list)
             res.append(curr_res)
+
     return task_id, res
 
 def evaluate_generations_parallel(generations, samples, idx=None, debug=False):
     assert len(generations.keys()) == len(samples)
-    args = [(task_id, samples[i], problem_generations, debug) for i, (task_id, problem_generations) in enumerate(generations.items())]
+    task_id = list(generations.items())[0][0]
+    gens = list(generations.items())[0][1]
+    args = [(task_id, samples[0], gens, debug)]
     import multiprocessing as mp
     with mp.Pool(mp.cpu_count()) as pool:
         results_list = pool.map(process_generation, args)
-    
-    results = {task_id: res for task_id, res in results_list}
+    results = {}
+    for tid, res in results_list:
+        if tid not in results:
+            results[tid] = []
+        results[tid].extend(res)
     return results
 
 def estimate_pass_at_k(num_samples, num_correct, k):
@@ -133,7 +145,7 @@ def estimate_pass_at_k(num_samples, num_correct, k):
     return np.array([estimator(int(n), int(c), k) for n, c in zip(num_samples_it, num_correct)])
         
 
-def compute_metrics(results, k_list=[1, 10, 100]):
+def compute_k_pass(results, k_list=[1, 10, 100]):
     total = []
     correct = []
     task_ids = []
@@ -154,9 +166,28 @@ def compute_metrics(results, k_list=[1, 10, 100]):
     pass_at_k["detail"] = detail_metrics
     return pass_at_k
 
+def calculate_1_pass(results: Dict[str, list], device="cuda:0") -> Dict[str, Any]:
+    """Calculate 1-pass metrics for a given results dictionary"""
+    metrics = {}
+    task_ids = list(results.keys())
+    for idx in task_ids:
+        res = results[idx]
+        max_length = max(len(inner) for inner in res)
+        padded_res = [inner + [False] * (max_length - len(inner)) for inner in res]
+        int_padded_res = [[int(item) for item in inner] for inner in padded_res]
+
+        tensor = torch.tensor(int_padded_res, dtype=torch.int32, device=device)
+        mask = (tensor == 1)
+        tensor = torch.where(mask, tensor, torch.zeros_like(tensor))
+        sum_by_test: list[int] = tensor.sum(dim=0).cpu().numpy().tolist() # type: ignore
+        metrics["tests"] = sum_by_test
+        total_sum: int = sum(metrics["tests"])
+        metrics[f"total"] = total_sum/(len(res)*max_length)
+    
+    return metrics
 
 
-def compute_key_pass(generation_file: str, taco, k_pass:list=[1, 10, 100], saving_file="taco_metrics.json"):
+def compute_metrics(generation_file: str, taco, k_pass:list=[1, 10, 100], saving_file="taco_metrics.json"):
     # Initialize evaluation dataset with the same setup with generation
     # difficulties = ['ALL']
     # difficulties = ["EASY", "MEDIUM", "MEDIUM_HARD", "HARD", "VERY_HARD"] 
@@ -173,7 +204,9 @@ def compute_key_pass(generation_file: str, taco, k_pass:list=[1, 10, 100], savin
     results = evaluate_generations(generations, taco)
     # You can use evaluate_generations_parallel to parallel executing multiple outputs for each problem
     # results = evaluate_generations_parallel(generations, taco)
-    metrics = compute_metrics(results, k_list=k_pass)
+    metrics = {}
+    metrics["k_pass"] = compute_k_pass(results, k_list=k_pass)
+    metrics["normalized_sum"]= calculate_1_pass(results)
 
     json.dump(metrics, open(saving_file, 'w'), indent=4)
     

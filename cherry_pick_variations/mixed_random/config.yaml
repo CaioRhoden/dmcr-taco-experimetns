@@ -1,0 +1,23 @@
+saving_paths:
+  inference: "mixed_random/inference_random_mix.json"
+  parsing: "mixed_random/parsing_random_mix.json"
+  results: "mixed_random/results_random_mix.json"
+  
+inference_configs:
+  instruction:   "You are a coding generation tool th   at will solve a probality   problem using Python"
+  model_path: "../models/llms/Llama-3.2-3B-Instruct"
+  num   _returns: 25
+  num_generations: 200
+  log_datetime: False
+  quantization: True
+  input_id: 2545
+  context_ids: [14892, 12872]
+  context_type: "full_problem"
+
+model_configs:
+  temperature: 0.7
+  top_p: 0.95
+  max_length: 4098
+  max_new_tokens: 1024
+
+  
