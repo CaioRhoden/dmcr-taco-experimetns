@@ -6,6 +6,7 @@ import numpy as np
 
 # used for debugging to time steps
 from datetime import datetime
+import uuid
 
 import os, sys, json
 import faulthandler
@@ -28,7 +29,7 @@ def timeout_handler(signum, frame):
     #return
     raise TimeoutException
 signal.signal(signal.SIGALRM, timeout_handler)
-TIMEOUT = 4  # seconds
+TIMEOUT = 4 # seconds
 
 EXECUTION_RESULTS = {1: "passed", 0: "false", -1: "timeout", -2: "runtime_error", -3: "returncode:{code}", -4: "compile_error"}
 
@@ -37,7 +38,9 @@ def run_test(sample, test=None, debug=False):
     if test(generated_code) is not None it'll try to run the code.
     otherwise it'll just return an input and output pair.
     """
-    
+    inputs_tmp_file = f"input.txt"
+    output_temp_file = f"output.txt"
+
     if debug:
         print(f"start = {datetime.now().time()}")
 
@@ -84,18 +87,19 @@ def run_test(sample, test=None, debug=False):
             if which_type == CODE_TYPE.call_based:  # Call-based
                 detail_results, debug_infos = execute_cb_code(method_func, inputs_list, outputs_list, timeout=TIMEOUT, early_stop=False, debug=debug)
             elif which_type == CODE_TYPE.standard_input:
-                detail_results = execute_std_code(exec_code, inputs_list, outputs_list, timeout=TIMEOUT, early_stop=False, debug=debug)
+                detail_results = execute_std_code(exec_code, inputs_list, outputs_list, timeout=TIMEOUT, early_stop=False, debug=debug, input_tmp_file=inputs_tmp_file, output_tmp_file=output_temp_file)
                 debug_infos = detail_results.get('debug', None)
                 detail_results = {k:v for k, v in detail_results.items() if k!='debug'}
                 if set(detail_results.values()) == {(False, 'returncode:1')}:
-                    detail_results = execute_std_code(synthesized_code+'\ncode()\n', inputs_list, outputs_list, timeout=TIMEOUT, early_stop=False, debug=debug)
-                
+                    detail_results = execute_std_code(synthesized_code+'\ncode()\n', inputs_list, outputs_list, timeout=TIMEOUT, early_stop=False, debug=debug, input_tmp_file=inputs_tmp_file, output_tmp_file=output_temp_file)
         if isinstance(detail_results, list):
             if len(detail_results) == 1:
                 detail_results = detail_results * len(inputs_list)
             detail_results = dict(zip([i for i in range(len(inputs_list))], detail_results))
         for test_id, test_result in detail_results.items():
-            if test_result[1] == "passed":
+            if test_id == "debug":
+                pass
+            elif test_result[1] == "passed":
                 results.append(True)
             elif test_result[1] == "false":
                 results.append(False)
@@ -138,8 +142,7 @@ def compile_and_get_func(program, which_type, method_name, timeout, debug):
         signal.alarm(0)
     except Exception as e:
         signal.alarm(0)
-        if debug:
-            print(f"compilation error = {e}")
+        print(f"compilation error = {e}")
         return False
     signal.alarm(0)
     
@@ -216,6 +219,7 @@ def synthesize_std_code(raw_code, debug=False):
         print(f"sol = {sol}")
         print(f"sol2 = {sol2}")
     
+
     return sol, sol2
 
 def execute_cb_code(method, inputs_list, outputs_list, timeout, early_stop=False, debug=False):
@@ -277,15 +281,17 @@ def execute_cb_code(method, inputs_list, outputs_list, timeout, early_stop=False
                     'gt_outputs': outputs,
                     'exec_outputs': exec_outputs
                 }
+        
     return results, debug_infos
 
-def remove_tmp_files():
-    tmp_files = ['input.txt', 'output.txt']
+def remove_tmp_files(input_file: str, output_file: str):
+    tmp_files = [input_file, output_file]
     for tmp_file in tmp_files:
         if tmp_file in os.listdir('.'):
             os.remove(tmp_file)
 
-def execute_std_code(synthesized_code, inputs_list, outputs_list, timeout, early_stop=False, debug=False):
+def execute_std_code(synthesized_code, inputs_list, outputs_list, timeout=4, early_stop=False, debug=False, input_tmp_file="input.txt", output_tmp_file="output.txt"):
+    start_time = datetime.now()
     temp_program_path = create_temp_file(synthesized_code)
     if debug:
         print("Test program:", temp_program_path)
@@ -295,14 +301,13 @@ def execute_std_code(synthesized_code, inputs_list, outputs_list, timeout, early
     if debug:
         exec_results['debug'] = {}
     for i, inputs in enumerate(inputs_list):
-        remove_tmp_files()
         outputs = outputs_list[i]
         if isinstance(inputs, list):
             inputs = "\n".join(inputs)
         if isinstance(outputs, list):
             outputs = "\n".join(outputs)
         try:
-            result = subprocess.run(['python', temp_program_path], input=inputs, text=True, capture_output=True, timeout=timeout)  
+            result = subprocess.run(['python', temp_program_path], input=inputs, text=True, capture_output=True, timeout=timeout)
             exec_code = 999
         except subprocess.TimeoutExpired:
             exec_code = -1
@@ -323,17 +328,16 @@ def execute_std_code(synthesized_code, inputs_list, outputs_list, timeout, early
                         exec_code = 0
                 except:
                     try:
-                        inputs_tmp_file = 'input.txt'
-                        with open(inputs_tmp_file, 'w') as ftemp:
+                        with open(input_tmp_file, 'w') as ftemp:
                             ftemp.write(inputs)
                         result = subprocess.run(['python', temp_program_path], text=True, timeout=timeout)
                         assert result.returncode == 0
-                        if compare_std_results(open('output.txt').read(), outputs, debug):
+                        if compare_std_results(open(output_tmp_file).read(), outputs, debug):
                             exec_code = 1
                         else:
                             exec_code = 0
                         
-                    except:
+                    except Exception as e:
                         # print('!!!!!!!!!!!!!')
                         exec_code = -3
             elif compare_std_results(result.stdout, outputs, debug):
@@ -351,6 +355,8 @@ def execute_std_code(synthesized_code, inputs_list, outputs_list, timeout, early
                 }
         if early_stop and exec_code<=0:
             break
+        remove_tmp_files(input_tmp_file, output_tmp_file)
+    end_time = datetime.now()
     return exec_results
 
 def print_debug_info(inputs, outputs, exec_outputs):
@@ -364,6 +370,9 @@ def create_temp_file(content):
     with tempfile.NamedTemporaryFile(delete=False, mode='w', encoding='utf-8') as temp_file:
         temp_file.write(content)
         temp_file_path = temp_file.name
+    
+    assert os.path.exists(temp_file_path)
+
     return temp_file_path
 
 def compare_std_results(exec_outputs, outputs, debug=False):

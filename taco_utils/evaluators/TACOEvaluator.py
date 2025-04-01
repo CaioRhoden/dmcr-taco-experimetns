@@ -1,29 +1,30 @@
 from numpy import ndarray
-from taco_utils.evaluators.compute_metrics import compute_key_pass
-from taco_utils.evaluators.compute_normalized_sum_test_pass import compute_normalized_sum_test_pass
+from taco_utils.evaluators.compute_metrics import compute_metrics
+from taco_utils.evaluators.compute_metrics_parallel import compute_metrics_parallel
 import json
 
 class TACOEvaluator():
 
-    def __init__(self, generation_file: str, taco, k_pass:list, k_pass_path: str, normalized_sum_path: str):
+    def __init__(self, generation_file: str, taco, k_pass:list, metrics_path:str):
         self.generation_file = generation_file
         self.taco = taco
         self.k_pass = k_pass
-        self.k_pass_path = k_pass_path
-        self.normalized_sum_path = normalized_sum_path
+        self.metrics_path = metrics_path
     
     def evaluate(self) -> None:
-        compute_key_pass(self.generation_file, self.taco, k_pass=self.k_pass, saving_file=self.k_pass_path)
-        compute_normalized_sum_test_pass(self.generation_file, self.taco, saving_file=self.normalized_sum_path)
+        compute_metrics(self.generation_file, self.taco, k_pass=self.k_pass, saving_file=self.metrics_path)
+
+    def evaluate_parallel(self) -> None:
+        compute_metrics_parallel(self.generation_file, self.taco, k_pass=self.k_pass, saving_file=self.metrics_path)
 
     def extract_pass_1(self) -> float:
-        with open(self.k_pass_path) as f:
+        with open(self.metrics_path) as f:
             metrics = json.load(f)
-        return metrics["pass@1"]
+        return metrics["k_pass"]["pass@1"]
     
     def extracted_normalized_sum(self) -> float:
-        with open(self.normalized_sum_path) as f:
+        with open(self.metrics_path) as f:
             metrics = json.load(f)
-        return metrics["total"]
+        return metrics["normalized_sum"]["total"]
 
 
