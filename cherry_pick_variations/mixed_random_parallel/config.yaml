@@ -10,9 +10,10 @@ inference_configs:
   num_generations: 200
   log_datetime: False
   quantization: True
-  input_id: 2545
+  input_id: 4936
   context_ids: []
   context_type: "full_problem"
+  evaluate_parallel: True
 
 model_configs:
   temperature: 0.7

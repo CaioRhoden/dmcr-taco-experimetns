@@ -174,26 +174,25 @@ def inference(
     )
 
     print(f"Generating codes: {datetime.datetime.now()}")
-    run_inference(
-        prompt = prompt,
-        instruction = config["inference_configs"]["instruction"],
-        saving_path = f"{config['saving_paths']['inference']}",
-        model_path = config["inference_configs"]["model_path"],
-        model_configs = config["model_configs"],
-        num_returns = config["inference_configs"]["num_returns"],
-        num_generations = config["inference_configs"]["num_generations"],
-        log_datetime = config["inference_configs"]["log_datetime"],
-        quantization = config["inference_configs"]["quantization"]
+    # run_inference(
+    #     prompt = prompt,
+    #     instruction = config["inference_configs"]["instruction"],
+    #     saving_path = f"{config['saving_paths']['inference']}",
+    #     model_path = config["inference_configs"]["model_path"],
+    #     model_configs = config["model_configs"],
+    #     num_returns = config["inference_configs"]["num_returns"],
+    #     num_generations = config["inference_configs"]["num_generations"],
+    #     log_datetime = config["inference_configs"]["log_datetime"],
+    #     quantization = config["inference_configs"]["quantization"]
         
-    )
-    print(f"Parsing generations: {datetime.datetime.now()}")
-    parse_generations(
-        generations_path=f"{config['saving_paths']['inference']}",
-        id = run_id,
-        saving_path = f"{config['saving_paths']['parsing']}"
-    )
+    # )
+    # print(f"Parsing generations: {datetime.datetime.now()}")
+    # parse_generations(
+    #     generations_path=f"{config['saving_paths']['inference']}",
+    #     id = run_id,
+    #     saving_path = f"{config['saving_paths']['parsing']}"
+    # )
 
-    print(f"Evaluating: {datetime.datetime.now()}")
     evaluator = TACOEvaluator(
         generation_file = f"{config['saving_paths']['parsing']}",
         taco = tests,
@@ -201,7 +200,13 @@ def inference(
         metrics_path = f"{config['saving_paths']['results']}",
     )
 
-    evaluator.evaluate()
+    print(f"Evaluating: {datetime.datetime.now()}")
+    if config["inference_configs"]["evaluate_parallel"]:
+        evaluator.evaluate_parallel()
+    else:
+        evaluator.evaluate()
+    print(f"End Evaluation: {datetime.datetime.now()}")
+
 
     input_id = str(uuid.uuid4())
     with open(f"logs/{input_id}.txt", "w") as f:
