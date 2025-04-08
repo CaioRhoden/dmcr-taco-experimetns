@@ -82,7 +82,8 @@ def process_generation(args):
     debug = True
     import multiprocessing as mp
     check_args = [(sample, o) for o in problem_generations]
-    with mp.Pool(mp.cpu_count()) as pool:
+    cpus = mp.cpu_count()
+    with mp.Pool(cpus) as pool:
         results_list = pool.map(check_correctness, check_args)
 
     for curr_res in results_list:
@@ -167,7 +168,10 @@ def calculate_1_pass(results: Dict[str, list], device="cuda:0") -> Dict[str, Any
         sum_by_test: list[int] = tensor.sum(dim=0).cpu().numpy().tolist() # type: ignore
         metrics["tests"] = sum_by_test
         total_sum: int = sum(metrics["tests"])
-        metrics[f"total"] = total_sum/(len(res)*max_length)
+        if max_length == 0 or len(res) == 0:
+            metrics[f"total"] = 0
+        else:
+            metrics[f"total"] = total_sum/(len(res)*max_length)
     
     return metrics
 

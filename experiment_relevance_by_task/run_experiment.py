@@ -15,7 +15,7 @@ os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 ## Repo funtions
 from taco_utils.evaluators.TACOEvaluator import TACOEvaluator
-from taco_utils import run_inference, parse_generations
+from taco_utils import run_inference, parse_generations, clean_directory
 from datasets.arrow_dataset import Dataset
 
 seed = 42
@@ -55,9 +55,8 @@ def run(data_path: str, config_path: str, input_len: int) -> None:
     """
     PATH = "../data/TACO/processed"
     train: pl.DataFrame = pl.read_ipc(f"{PATH}/train.feather")
-    test: pl.DataFrame = pl.read_ipc(f"{PATH}/test.feather")
     train_solutions: pl.DataFrame = pl.read_ipc(f"{PATH}/train_solutions.feather")
-    train_dict: pl.DataFrame = pl.read_ipc(f"{PATH}/train_dict.feather")
+    train_dict =  load_dataset("arrow", data_dir="../data/TACO/train", split="train")
 
     
     config: Dict[str, Any] = yaml.safe_load(open(config_path))
@@ -69,7 +68,8 @@ def run(data_path: str, config_path: str, input_len: int) -> None:
 
 
     print("Splitting data to be used during experiment")
-    generate_data_config(train, data_path, input_len)
+    if not os.path.exists(data_path):
+        generate_data_config(train, data_path, input_len)
 
 
     data: Dict[str, Any] = json.load(open(data_path))
@@ -81,13 +81,14 @@ def run(data_path: str, config_path: str, input_len: int) -> None:
         ## Iterate over difficulty
         for tag in data["input_ids"].keys():
 
-            print(f"Running inference for tag: {tag}")
+            print(f"Running inference number : {ref_idx} for tag: {tag}")
 
             ## Run inference by id and compare the expected started and ended index
             for task_id in data["input_ids"][tag]:
                 if ref_idx < start_idx or ref_idx > end_idx:
                     pass
                 else:
+                    clean_directory()
                     run_inference_id(
                         run_id=task_id,
                         context_type=context_type,
@@ -97,10 +98,13 @@ def run(data_path: str, config_path: str, input_len: int) -> None:
                         train_solutions=train_solutions,
                         train_dict=train_dict,
                         context=data["context_ids"],
+                        ref_idx=ref_idx
+
                     )
 
                     print(f"Running inference for task id: {task_id}")
                     print(f"Iteration {ref_idx} of {total_iterations-1}")
+                    
                 ref_idx += 1
 
 
@@ -178,7 +182,8 @@ def inference(
         tests: list, 
         context_type: str, 
         run_id: int,
-        tag: str
+        tag: str,
+        ref_idx: int = -1
         
         ):
 
@@ -193,26 +198,36 @@ def inference(
         config = config,
 
     )
-
-    print(f"Generating codes: {datetime.datetime.now()}")
-    # run_inference(
-    #     prompt = prompt,
-    #     instruction = config["inference_configs"]["instruction"],
-    #     saving_path = f"{config['saving_paths']['inference'][context_type]}/{run_id}_inference.json",
-    #     model_path = config["inference_configs"]["model_path"],
-    #     model_configs = config["model_configs"],
-    #     num_returns = config["inference_configs"]["num_returns"],
-    #     num_generations = config["inference_configs"]["num_generations"],
-    #     log_datetime = config["inference_configs"]["log_datetime"],
-    #     quantization = config["inference_configs"]["quantization"]
+    generation_time = 0
+    _start_time = datetime.datetime.now()
+    
+    run_inference(
+        prompt = prompt,
+        instruction = config["inference_configs"]["instruction"],
+        saving_path = f"{config['saving_paths']['inference'][context_type]}/{run_id}_inference.json",
+        model_path = config["inference_configs"]["model_path"],
+        model_configs = config["model_configs"],
+        num_returns = config["inference_configs"]["num_returns"],
+        num_generations = config["inference_configs"]["num_generations"],
+        log_datetime = config["inference_configs"]["log_datetime"],
+        quantization = config["inference_configs"]["quantization"]
         
-    # )
+    )
+    _end_time = datetime.datetime.now()
+    generation_time = str((_end_time - _start_time).total_seconds())
+
+    _start_time = datetime.datetime.now()
     print(f"Parsing generations: {datetime.datetime.now()}")
     parse_generations(
         generations_path=f"{config['saving_paths']['inference'][context_type]}/{run_id}_inference.json",
         id = run_id,
         saving_path = f"{config['saving_paths']['parsing'][context_type]}/{run_id}_parsing.json"
     )
+    _end_time = datetime.datetime.now()
+    parsing_time = str((_end_time - _start_time).total_seconds())
+
+
+    _start_time = datetime.datetime.now()
 
     # tests here is the the list of the dict TACO of the sample being evaluated
     print(f"Evaluating: {datetime.datetime.now()}")
@@ -223,7 +238,10 @@ def inference(
         metrics_path = f"{config['saving_paths']['results'][context_type]}/{run_id}_metrics.json",
     )
 
-    evaluator.evaluate()
+    evaluator.evaluate_parallel()
+
+    _end_time = datetime.datetime.now()
+    evaluating_time = str((_end_time - _start_time).total_seconds())
 
     input_id = str(uuid.uuid4())
     with open(f"logs/{input_id}.txt", "w") as f:
@@ -232,7 +250,6 @@ def inference(
 
 
 
-    evaluator.evaluate()
     end_time = datetime.datetime.now()
     duration_in_seconds = (end_time - start_time).total_seconds()
     wandb.log({
@@ -241,7 +258,11 @@ def inference(
         "device": torch.cuda.get_device_name(i),
         "tag": tag,
         "context": context_type,
-        "total_duration": duration_in_seconds
+        "total_duration": duration_in_seconds,
+        "evaluation_time": evaluating_time,
+        "generation_time": generation_time,
+        "parsing_time": parsing_time,
+        "ref_idx": ref_idx
     })
     
     complete_log = wandb.Artifact(
@@ -269,6 +290,7 @@ def run_inference_id(
         train_solutions: pl.DataFrame,
         train_dict: Any,
         context: dict[str, Any] = {},
+        ref_idx: int = -1
 
     ):
 
@@ -316,7 +338,8 @@ def run_inference_id(
         [train_dict[run_id]], 
         context_type=context_type, 
         run_id=run_id,
-        tag=tag
+        tag=tag,
+        ref_idx=ref_idx
     )
 
 
