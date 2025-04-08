@@ -259,8 +259,6 @@ def run_inference_cherry_pick(
     prompt_input = selected_problem.select("input").to_struct().to_pandas().iloc[0]["input"]
     prompt = f"Please write a Python program \nQUESTION: \n{prompt_input} \n ANSWER: \n."
 
-    print(f"Context Type: {context_type}")
-
 
     ### SETUP CONTEXT BY TYPE
     match context_type:
