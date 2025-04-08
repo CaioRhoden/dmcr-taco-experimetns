@@ -82,7 +82,7 @@ def process_generation(args):
     debug = True
     import multiprocessing as mp
     check_args = [(sample, o) for o in problem_generations]
-    cpus = mp.cpu_count()
+    cpus = max(mp.cpu_count(), 16)
     with mp.Pool(cpus) as pool:
         results_list = pool.map(check_correctness, check_args)
 
