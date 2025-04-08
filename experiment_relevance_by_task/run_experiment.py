@@ -70,6 +70,9 @@ def run(data_path: str, config_path: str, input_len: int) -> None:
     print("Splitting data to be used during experiment")
     if not os.path.exists(data_path):
         generate_data_config(train, data_path, input_len)
+    
+    if not os.path.exists("logs"):
+        os.makedirs("logs")
 
 
     data: Dict[str, Any] = json.load(open(data_path))
@@ -311,13 +314,24 @@ def run_inference_id(
 
         case "full_problem":
             context_ids = context[tag][str(run_id)]
-            inputs = train.filter(pl.col("id").is_in(context_ids)).select("input").unique().to_dict()["input"]
+            inputs = train.filter(pl.col("id").is_in(context_ids)).select("id", "input").unique()
+            # inputs_dict = inputs.to_dict()["input"]
+
+
             ## One solution per problem
-            solutions = train_solutions.filter(pl.col("id").is_in(context_ids)).group_by(pl.col("id")).head(1).select("solution").unique().to_dict()["solution"]
-            
+            solutions = train_solutions.filter(pl.col("id").is_in(context_ids)).group_by(pl.col("id")).head(1).select("id", "solution").unique()
+            print(solutions.head())
+            # solutions_dict = solutions.to_dict()["solution"]
+            inputs = (
+                inputs
+                .join(solutions, on="id", how="inner")
+            )
+
+            inputs_dict = inputs.to_dict()["input"]
+            solutions_dict = inputs.to_dict()["solution"]
             context_prompt = f"You will have to answer a programming quesiton in {tag}, we will pass before some examples of questions and solutions\n"
-            for _idx in range(len(inputs)):
-                context_prompt += f"EXAMPLE QUESTION {_idx}:\n {inputs[_idx]}\n EXAMPLE SOLUTION {_idx}:\n {solutions[_idx]}\n"
+            for _idx in range(len(inputs_dict)):
+                context_prompt += f"EXAMPLE QUESTION {_idx}:\n {inputs_dict[_idx]}\n EXAMPLE SOLUTION {_idx}:\n {solutions_dict[_idx]}\n"
             
             prompt = context_prompt + prompt
 
