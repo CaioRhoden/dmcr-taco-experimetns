@@ -3,7 +3,7 @@ models
 data
 logs
 *.json
-
+tmp*
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
