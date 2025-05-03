@@ -19,7 +19,7 @@ def check_correctness(args, debug=False):
     result = []
     sample, generation = args
     _temp_run(sample, generation, debug, result)
-    if result == []:
+    if result[0] == []:
         in_outs = json.loads(sample["input_output"])
         # consider that all tests failed
         result = [[-1 for i in range(len(in_outs["inputs"]))]]
@@ -82,7 +82,7 @@ def process_generation(args):
     debug = True
     import multiprocessing as mp
     check_args = [(sample, o) for o in problem_generations]
-    cpus = max(mp.cpu_count(), 16)
+    cpus = min(mp.cpu_count(), 32)
     with mp.Pool(cpus) as pool:
         results_list = pool.map(check_correctness, check_args)
 
